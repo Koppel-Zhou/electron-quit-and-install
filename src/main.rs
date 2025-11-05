@@ -5,13 +5,15 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, Signal, System};
 
 /// 命令行参数解析
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// 要杀掉的进程名 (例如: electron-hotupdate-demo.exe)
+    /// 要杀掉的进程名 (例如: yourApp.exe,otherApp.exe)
     #[arg(long)]
     ps: String,
 
@@ -72,8 +74,19 @@ impl Logger {
     }
 }
 
-/// 杀掉指定进程名的所有实例
-fn kill_process_by_name(name: &str, logger: &Logger) {
+/// 杀掉多个指定进程名的所有实例（支持逗号分隔），并等待退出确认
+fn kill_processes_by_names(names: &str, logger: &Logger) {
+    let targets: Vec<String> = names
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if targets.is_empty() {
+        logger.log("No process names provided, skipping kill step.");
+        return;
+    }
+
     let mut sys = System::new_all();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -81,11 +94,52 @@ fn kill_process_by_name(name: &str, logger: &Logger) {
         ProcessRefreshKind::everything(),
     );
 
+    // 先发送 Kill 信号
     for (pid, process) in sys.processes() {
-        let pname = process.name().to_string_lossy();
-        if pname.eq_ignore_ascii_case(name) {
+        let pname = process.name().to_string_lossy().to_string();
+        if targets.iter().any(|t| pname.eq_ignore_ascii_case(t)) {
             logger.log(&format!("Killing process {:?} (pid {})", pname, pid));
-            let _ = process.kill_with(Signal::Kill);
+            if process.kill_with(Signal::Kill).is_none() {
+                logger.log(&format!("Failed to send kill signal to {:?}", pname));
+            }
+        }
+    }
+
+    // 再等待确认退出
+    const MAX_WAIT_MS: u64 = 5000; // 最多等待 5 秒
+    const CHECK_INTERVAL_MS: u64 = 500;
+
+    let mut elapsed = 0;
+    loop {
+        thread::sleep(Duration::from_millis(CHECK_INTERVAL_MS));
+        elapsed += CHECK_INTERVAL_MS;
+
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::everything(),
+        );
+
+        let alive: Vec<_> = sys
+            .processes()
+            .values()
+            .filter(|p| {
+                let pname = p.name().to_string_lossy();
+                targets.iter().any(|t| pname.eq_ignore_ascii_case(t))
+            })
+            .map(|p| p.name().to_string_lossy().to_string())
+            .collect();
+
+        if alive.is_empty() {
+            logger.log("All target processes have exited.");
+            break;
+        } else {
+            logger.log(&format!("Waiting for processes to exit: {:?}", alive));
+        }
+
+        if elapsed >= MAX_WAIT_MS {
+            logger.log("Timeout waiting for processes to exit, continue anyway.");
+            break;
         }
     }
 }
@@ -129,17 +183,12 @@ fn main() {
 
     logger.log("Updater started");
     logger.log(&format!("App path: {}", args.app));
-    logger.log(&format!("Process name: {}", args.ps));
+    logger.log(&format!("Process name(s): {}", args.ps));
     logger.log(&format!("Input dir: {}", args.input));
     logger.log(&format!("Output dir: {}", args.output));
 
-    let ps_name = Path::new(&args.ps)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-
-    // 杀掉主程序
-    kill_process_by_name(ps_name, &logger);
+    // 杀掉主程序并等待完全退出
+    kill_processes_by_names(&args.ps, &logger);
 
     // 执行文件复制
     let input_path = PathBuf::from(&args.input);

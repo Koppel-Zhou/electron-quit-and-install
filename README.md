@@ -19,7 +19,7 @@ cargo build --release
 
 ### 示例
 ```shell
-electron-quit-and-install.exe --app="D:\yourApp.exe" --ps="electron-hotupdate-demo.exe" --input="D:\yourApp\updates" --output="D:\yourApp\resources" --log="D:\yourApp\logs\updater.log"
+electron-quit-and-install.exe --app="D:\yourApp.exe" --ps="yourApp.exe,otherApp.exe" --input="D:\yourApp\updates" --output="D:\yourApp\resources" --log="D:\yourApp\logs\updater.log"
 ```
 
 ```Javascript
