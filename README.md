@@ -15,16 +15,18 @@ cargo build --release
 |`--input`|`--input={updateFilePath}`|应用的更新文件存储路径|
 |`--output`|`--output={updateDestFilePath}`|应用的更新文件拷贝的目标路径|
 |`--app`|`--app={exeName}`|应用的 `exe` 文件路径，用于拷贝文件结束后启动应用|
+|`--log`|`--app={logPath}`|更新器日志输出文件路径，如不设置此参数，日志输出至与更新器同级目录下|
 
 ### 示例
 ```shell
-electron-quit-and-install.exe --app="D:\yourApp.exe" --ps="electron-hotupdate-demo.exe" --input="D:\yourApp\updates" --output="D:\yourApp\resources"
+electron-quit-and-install.exe --app="D:\yourApp.exe" --ps="electron-hotupdate-demo.exe" --input="D:\yourApp\updates" --output="D:\yourApp\resources" --log="D:\yourApp\logs\updater.log"
 ```
 
 ```Javascript
 // 在Electron应用中使用
 const update_dir = path.join(app.getPath('userData'), 'updates')
 const resources_dir = path.join(app.getPath('assets'), 'resources')
+const log_path = path.join(app.getPath('logs'), 'updater.log')
 
 const child = spawn(
 `${resources_dir}/electron-quit-and-install.exe`,
@@ -32,7 +34,8 @@ const child = spawn(
     `--app=${path.resolve(app.getPath('exe'))}`,
     `--ps=yourApp.exe`,
     `--input=${path.resolve(update_dir)}`,
-    `--output=${resources_dir}`
+    `--output=${resources_dir}`,
+    `--log=${log_path}`
 ],
 {
     detached: true,
