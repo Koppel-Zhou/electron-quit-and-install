@@ -32,6 +32,10 @@ struct Args {
     /// 日志文件路径（可选），默认在当前 exe 同级目录
     #[arg(long)]
     log: Option<String>,
+
+    /// 要忽略复制的文件/目录（以逗号分隔，路径相对于 input）
+    #[arg(long)]
+    ignore: Option<String>,
 }
 
 /// 日志器结构体
@@ -145,7 +149,12 @@ fn kill_processes_by_names(names: &str, logger: &Logger) {
 }
 
 /// 复制文件（保留目录结构），同名文件覆盖，不清空目标目录
-fn copy_dir_recursive(input: &Path, output: &Path, logger: &Logger) -> io::Result<()> {
+fn copy_dir_recursive(
+    input: &Path,
+    output: &Path,
+    ignores: &[String],
+    logger: &Logger,
+) -> io::Result<()> {
     if !input.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -157,11 +166,21 @@ fn copy_dir_recursive(input: &Path, output: &Path, logger: &Logger) -> io::Resul
         let entry = entry?;
         let path = entry.path();
         let relative = path.strip_prefix(input).unwrap();
+        let relative_str = relative.to_string_lossy().replace('\\', "/"); // ✅ 统一路径分隔符
         let dest = output.join(relative);
+
+        // ✅ 检查是否在忽略列表中
+        if ignores
+            .iter()
+            .any(|ignore| relative_str.starts_with(ignore))
+        {
+            logger.log(&format!("Ignored: {}", relative_str));
+            continue;
+        }
 
         if path.is_dir() {
             fs::create_dir_all(&dest)?;
-            copy_dir_recursive(&path, &dest, logger)?;
+            copy_dir_recursive(&path, &dest, ignores, logger)?;
         } else {
             fs::create_dir_all(dest.parent().unwrap())?;
             fs::copy(&path, &dest)?;
@@ -175,7 +194,6 @@ fn copy_dir_recursive(input: &Path, output: &Path, logger: &Logger) -> io::Resul
 fn main() {
     let args = Args::parse();
 
-    // 初始化日志器
     let logger = Logger::new(args.log.as_deref()).unwrap_or_else(|e| {
         eprintln!("Failed to initialize logger: {}", e);
         std::process::exit(1);
@@ -187,14 +205,27 @@ fn main() {
     logger.log(&format!("Input dir: {}", args.input));
     logger.log(&format!("Output dir: {}", args.output));
 
-    // 杀掉主程序并等待完全退出
+    // ✅ 解析忽略路径
+    let ignores: Vec<String> = args
+        .ignore
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().replace('\\', "/")) // 统一路径分隔符
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if !ignores.is_empty() {
+        logger.log(&format!("Ignore list: {:?}", ignores));
+    }
+
     kill_processes_by_names(&args.ps, &logger);
 
     // 执行文件复制
     let input_path = PathBuf::from(&args.input);
     let output_path = PathBuf::from(&args.output);
 
-    if let Err(e) = copy_dir_recursive(&input_path, &output_path, &logger) {
+    if let Err(e) = copy_dir_recursive(&input_path, &output_path, &ignores, &logger) {
         logger.log(&format!("File copy failed: {}", e));
         return;
     }

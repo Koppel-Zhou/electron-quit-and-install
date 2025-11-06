@@ -16,6 +16,7 @@ cargo build --release
 |`--output`|`--output={updateDestFilePath}`|应用的更新文件拷贝的目标路径|
 |`--app`|`--app={exeName}`|应用的 `exe` 文件路径，用于拷贝文件结束后启动应用|
 |`--log`|`--app={logPath}`|更新器日志输出文件路径，如不设置此参数，日志输出至与更新器同级目录下|
+|`--ignore`|`--ignore={file1Path,file2Path}`|以 `,` 为分隔符的相对 `--input` 参数路径的文件路径列表，作为拷贝忽略文件列表|
 
 ### 示例
 ```shell
