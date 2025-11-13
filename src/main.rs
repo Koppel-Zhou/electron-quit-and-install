@@ -229,6 +229,10 @@ fn main() {
         "{}_new",
         output_path.file_name().unwrap().to_string_lossy()
     ));
+    let output_old = output_path.with_file_name(format!(
+        "{}_old",
+        output_path.file_name().unwrap().to_string_lossy()
+    ));
 
     logger.log(&format!(
         "Creating temporary update directory: {}",
@@ -263,11 +267,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    // 重命名旧 output -> output_old
-    let output_old = output_path.with_file_name(format!(
-        "{}_old",
-        output_path.file_name().unwrap().to_string_lossy()
-    ));
+    // output → output_old
     if output_old.exists() {
         fs::remove_dir_all(&output_old).unwrap_or_else(|e| {
             logger.log(&format!("Failed to remove old backup directory: {}", e));
@@ -280,7 +280,7 @@ fn main() {
         });
     }
 
-    // 临时目录 output_new -> output
+    // output_new → output
     fs::rename(&output_new, &output_path).unwrap_or_else(|e| {
         logger.log(&format!(
             "Failed to rename temporary directory -> output: {}",
@@ -291,7 +291,31 @@ fn main() {
 
     logger.log("Update applied successfully");
 
-    // ✅ 启动主程序并检测是否成功
+    // ✅ 启动主程序前清理 input 和 output_old
+    logger.log("Cleaning up old files before restarting app...");
+    if input_path.exists() {
+        if let Err(e) = fs::remove_dir_all(&input_path) {
+            logger.log(&format!("Failed to remove input directory: {}", e));
+        } else {
+            logger.log(&format!(
+                "Removed input directory: {}",
+                input_path.display()
+            ));
+        }
+    }
+
+    if output_old.exists() {
+        if let Err(e) = fs::remove_dir_all(&output_old) {
+            logger.log(&format!("Failed to remove output_old directory: {}", e));
+        } else {
+            logger.log(&format!(
+                "Removed backup directory: {}",
+                output_old.display()
+            ));
+        }
+    }
+
+    // 启动主程序
     if Path::new(&args.app).exists() {
         logger.log("Restarting main app...");
         match Command::new(&args.app)
@@ -299,52 +323,8 @@ fn main() {
             .stderr(Stdio::null())
             .spawn()
         {
-            Ok(mut child) => {
-                logger.log("Main app started, waiting briefly to confirm...");
-
-                // 等待 3 秒确认是否仍在运行
-                thread::sleep(Duration::from_secs(3));
-
-                // 检查是否已退出
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        logger.log(&format!("App exited immediately with status: {}", status));
-                    }
-                    Ok(None) => {
-                        logger.log("App running successfully, cleaning up input and old output...");
-
-                        // ✅ 删除 input 和 output_old
-                        if input_path.exists() {
-                            if let Err(e) = fs::remove_dir_all(&input_path) {
-                                logger.log(&format!("Failed to remove input directory: {}", e));
-                            } else {
-                                logger.log(&format!(
-                                    "Removed input directory: {}",
-                                    input_path.display()
-                                ));
-                            }
-                        }
-
-                        if output_old.exists() {
-                            if let Err(e) = fs::remove_dir_all(&output_old) {
-                                logger
-                                    .log(&format!("Failed to remove output_old directory: {}", e));
-                            } else {
-                                logger.log(&format!(
-                                    "Removed backup directory: {}",
-                                    output_old.display()
-                                ));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        logger.log(&format!("Failed to check app status: {}", e));
-                    }
-                }
-            }
-            Err(e) => {
-                logger.log(&format!("Failed to start main app: {}", e));
-            }
+            Ok(_) => logger.log("Main app restarted successfully"),
+            Err(e) => logger.log(&format!("Failed to start main app: {}", e)),
         }
     } else {
         logger.log("Main app not found, skip restart");
