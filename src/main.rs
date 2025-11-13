@@ -224,22 +224,128 @@ fn main() {
     // 执行文件复制
     let input_path = PathBuf::from(&args.input);
     let output_path = PathBuf::from(&args.output);
+    // 创建 output_new 临时目录
+    let output_new = output_path.with_file_name(format!(
+        "{}_new",
+        output_path.file_name().unwrap().to_string_lossy()
+    ));
 
-    if let Err(e) = copy_dir_recursive(&input_path, &output_path, &ignores, &logger) {
-        logger.log(&format!("File copy failed: {}", e));
-        return;
+    logger.log(&format!(
+        "Creating temporary update directory: {}",
+        output_new.display()
+    ));
+    if output_new.exists() {
+        fs::remove_dir_all(&output_new).unwrap_or_else(|e| {
+            logger.log(&format!(
+                "Failed to remove existing temporary directory: {}",
+                e
+            ));
+        });
+    }
+    fs::create_dir_all(&output_new).unwrap_or_else(|e| {
+        logger.log(&format!("Failed to create temporary directory: {}", e));
+        std::process::exit(1);
+    });
+
+    // 先拷贝旧 output（如果存在）到 output_new
+    if output_path.exists() {
+        logger.log("Copying existing output to temporary directory...");
+        if let Err(e) = copy_dir_recursive(&output_path, &output_new, &[], &logger) {
+            logger.log(&format!("Failed to copy existing output: {}", e));
+            std::process::exit(1);
+        }
     }
 
-    logger.log("File copy completed successfully");
+    // 再拷贝 input 更新文件到 output_new
+    logger.log("Copying update files to temporary directory...");
+    if let Err(e) = copy_dir_recursive(&input_path, &output_new, &ignores, &logger) {
+        logger.log(&format!("File copy failed: {}", e));
+        std::process::exit(1);
+    }
 
-    // 重启主程序
+    // 重命名旧 output -> output_old
+    let output_old = output_path.with_file_name(format!(
+        "{}_old",
+        output_path.file_name().unwrap().to_string_lossy()
+    ));
+    if output_old.exists() {
+        fs::remove_dir_all(&output_old).unwrap_or_else(|e| {
+            logger.log(&format!("Failed to remove old backup directory: {}", e));
+        });
+    }
+    if output_path.exists() {
+        fs::rename(&output_path, &output_old).unwrap_or_else(|e| {
+            logger.log(&format!("Failed to rename output -> output_old: {}", e));
+            std::process::exit(1);
+        });
+    }
+
+    // 临时目录 output_new -> output
+    fs::rename(&output_new, &output_path).unwrap_or_else(|e| {
+        logger.log(&format!(
+            "Failed to rename temporary directory -> output: {}",
+            e
+        ));
+        std::process::exit(1);
+    });
+
+    logger.log("Update applied successfully");
+
+    // ✅ 启动主程序并检测是否成功
     if Path::new(&args.app).exists() {
         logger.log("Restarting main app...");
-        let _ = Command::new(&args.app)
+        match Command::new(&args.app)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn();
-        logger.log("Main app restarted");
+            .spawn()
+        {
+            Ok(mut child) => {
+                logger.log("Main app started, waiting briefly to confirm...");
+
+                // 等待 3 秒确认是否仍在运行
+                thread::sleep(Duration::from_secs(3));
+
+                // 检查是否已退出
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        logger.log(&format!("App exited immediately with status: {}", status));
+                    }
+                    Ok(None) => {
+                        logger.log("App running successfully, cleaning up input and old output...");
+
+                        // ✅ 删除 input 和 output_old
+                        if input_path.exists() {
+                            if let Err(e) = fs::remove_dir_all(&input_path) {
+                                logger.log(&format!("Failed to remove input directory: {}", e));
+                            } else {
+                                logger.log(&format!(
+                                    "Removed input directory: {}",
+                                    input_path.display()
+                                ));
+                            }
+                        }
+
+                        if output_old.exists() {
+                            if let Err(e) = fs::remove_dir_all(&output_old) {
+                                logger
+                                    .log(&format!("Failed to remove output_old directory: {}", e));
+                            } else {
+                                logger.log(&format!(
+                                    "Removed backup directory: {}",
+                                    output_old.display()
+                                ));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        logger.log(&format!("Failed to check app status: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                logger.log(&format!("Failed to start main app: {}", e));
+            }
+        }
     } else {
         logger.log("Main app not found, skip restart");
     }
